@@ -259,6 +259,28 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.4) sepia(1)
 .no-data{text-align:center;padding:32px;color:var(--muted)}
 .no-data-emoji{font-size:36px;margin-bottom:8px}
 .no-data-text{font-size:13px;font-weight:600}
+
+/* ── MONTH BALANCE CARD ── */
+.month-balance-card{background:var(--surface);border:1.5px solid rgba(56,189,248,.2);border-radius:20px;padding:18px 20px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;position:relative;overflow:hidden;animation:slideUp .35s ease both}
+.month-balance-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,#38bdf8,#2dd4bf)}
+.month-balance-card::after{content:'';position:absolute;top:-40px;right:-40px;width:150px;height:150px;background:radial-gradient(circle,rgba(56,189,248,.06),transparent 70%);pointer-events:none}
+.mbc-label{font-size:9px;font-weight:800;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:4px}
+.mbc-period{font-size:18px;font-weight:900;color:var(--text);letter-spacing:-.3px}
+.mbc-right{text-align:right}
+.mbc-inflow,.mbc-spent{display:flex;align-items:center;gap:8px;justify-content:flex-end;margin-bottom:4px}
+.mbc-tag{font-size:9px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);background:var(--surface2);padding:2px 6px;border-radius:5px}
+.mbc-inflow span:last-child{font-size:13px;font-weight:700;color:#38bdf8}
+.mbc-spent span:last-child{font-size:13px;font-weight:700;color:#fb923c}
+.mbc-balance-val{font-size:26px;font-weight:900;margin-top:6px;letter-spacing:-.5px}
+.mbc-balance-val.pos{color:#2dd4bf}
+.mbc-balance-val.neg{color:#fb923c}
+
+/* ── LOG MONTH FILTER ── */
+.log-month-bar{display:flex;align-items:center;gap:10px;margin-bottom:14px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:14px}
+.log-month-label{font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);flex-shrink:0}
+.log-month-select{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:7px 12px;color:var(--text);font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;outline:none;cursor:pointer}
+.log-month-select:focus{border-color:#38bdf8}
+.log-entry-count{font-size:10px;font-weight:700;color:var(--muted);background:var(--surface2);border:1px solid var(--border);padding:3px 8px;border-radius:20px;flex-shrink:0}
 .sync-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;flex-shrink:0}
 .sync-badge{display:flex;align-items:center;font-size:10px;font-weight:700;color:var(--muted);background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:3px 9px;gap:4px}
 .sync-badge.online{color:#10b981;border-color:#10b98140}
@@ -441,6 +463,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.4) sepia(1)
     <!-- LOG VIEW -->
     <div class="view active" id="view-log">
 
+      <!-- Log Month Filter -->
+      <div class="log-month-bar">
+        <div class="log-month-label">📆 Month</div>
+        <select class="log-month-select" id="log-month-select" onchange="renderLogLists()">
+        </select>
+        <div class="log-entry-count" id="log-entry-count">0 entries</div>
+      </div>
+
       <!-- SIP -->
       <div class="panel sip-panel" style="animation-delay:.04s">
         <div class="panel-header">
@@ -548,6 +578,19 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.4) sepia(1)
           <select class="filter-select" id="filter-month" onchange="renderDashboard()">
             <option value="all">All Months</option>
           </select>
+        </div>
+      </div>
+
+      <!-- Balance card for selected month -->
+      <div class="month-balance-card" id="month-balance-card" style="display:none">
+        <div class="mbc-left">
+          <div class="mbc-label">📆 CLOSING BALANCE</div>
+          <div class="mbc-period" id="mbc-period">March 2026</div>
+        </div>
+        <div class="mbc-right">
+          <div class="mbc-inflow"><span class="mbc-tag">Inflow</span><span id="mbc-inflow">₹0</span></div>
+          <div class="mbc-spent"><span class="mbc-tag">Spent</span><span id="mbc-spent">₹0</span></div>
+          <div class="mbc-balance-val" id="mbc-balance">₹0</div>
         </div>
       </div>
 
@@ -907,6 +950,7 @@ async function loadUserData(){
     document.getElementById('inflow-input').value = v || '';
   }catch(e){document.getElementById('inflow-input').value='';}
   setDefaultDates();
+  populateLogMonths();
   populateFilters();
   renderLogLists();
   updateBalance();
@@ -1065,13 +1109,53 @@ function deleteEntry(cat,id){
   if(document.getElementById('view-dashboard').classList.contains('active'))renderDashboard();
 }
 
+function populateLogMonths(){
+  const sel = document.getElementById('log-month-select');
+  if(!sel) return;
+  const curVal = sel.value;
+  // Get all months from all categories
+  const allDates = ['sip','daily','house','credit'].flatMap(cat => (data[cat]||[]).map(e=>e.date||''));
+  const months = [...new Set(allDates.filter(Boolean).map(d=>d.slice(0,7)))].sort().reverse();
+  sel.innerHTML = '';
+  // Default to current month
+  const now = new Date();
+  const curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  months.forEach(m => {
+    const [y,mo] = m.split('-');
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = `${MONTHS[parseInt(mo)-1]} ${y}`;
+    if(m === (curVal || curMonth)) o.selected = true;
+    sel.appendChild(o);
+  });
+  // If no months yet, add current month as placeholder
+  if(!months.length){
+    const o = document.createElement('option');
+    o.value = curMonth;
+    const [y,mo] = curMonth.split('-');
+    o.textContent = `${MONTHS[parseInt(mo)-1]} ${y}`;
+    sel.appendChild(o);
+  }
+}
+
 function renderLogLists(){
+  // Get selected log month
+  const logMonthSel = document.getElementById('log-month-select');
+  const logMonth = logMonthSel ? logMonthSel.value : null;
+  let totalEntries = 0;
+
   ['sip','daily','house','credit'].forEach(cat=>{
-    document.getElementById(cat+'-total').textContent=fmt(totalAll(cat));
     const el=document.getElementById(cat+'-list');
-    const sorted=[...data[cat]].sort((a,b)=>b.date.localeCompare(a.date));
+    // Filter by selected month
+    let entries = [...(data[cat]||[])];
+    if(logMonth) entries = entries.filter(e => e.date && e.date.startsWith(logMonth));
+    const sorted = entries.sort((a,b)=>b.date.localeCompare(a.date));
+    // Update panel total for this month only
+    const monthTotal = sorted.reduce((s,e)=>s+(e.amount||0),0);
+    document.getElementById(cat+'-total').textContent=fmt(monthTotal);
+    totalEntries += sorted.length;
     if(!sorted.length){
-      el.innerHTML=`<div class="empty-state"><div class="empty-emoji">${cat==='sip'?'📭':cat==='daily'?'🍽️':cat==='house'?'🏡':'💸'}</div><div class="empty-text">No entries yet — add one above!</div></div>`;
+      el.innerHTML=`<div class="empty-state"><div class="empty-emoji">${cat==='sip'?'📭':cat==='daily'?'🍽️':cat==='house'?'🏡':'💸'}</div><div class="empty-text">No entries for this month</div></div>`;
       return;
     }
     el.innerHTML=sorted.map(e=>{
@@ -1086,6 +1170,9 @@ function renderLogLists(){
       </div>`;
     }).join('');
   });
+  // Update entry count badge
+  const countEl = document.getElementById('log-entry-count');
+  if(countEl) countEl.textContent = totalEntries + ' entr' + (totalEntries===1?'y':'ies');
 }
 
 // ── FILTERS ──
@@ -1126,6 +1213,27 @@ function renderDashboard(){
   if(mVal!=='all'){const[y,m]=mVal.split('-');lbl=`📆 ${MONTHS[parseInt(m)-1]} ${y}`;}
   else if(yVal!=='all')lbl=`📅 ${yVal}`;
   document.getElementById('pie-period').textContent=lbl;
+
+  // ── Balance card for selected month ──
+  const balCard = document.getElementById('month-balance-card');
+  if(mVal !== 'all'){
+    const [y,m] = mVal.split('-');
+    const periodLabel = `${MONTHS[parseInt(m)-1]} ${y}`;
+    // Get inflow (monthly inflow from input)
+    const inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+    const totalSpent = s + d + h;  // exclude credits from spent
+    const balance = inflow - totalSpent + cr; // add credits back
+    const balEl = document.getElementById('mbc-balance');
+    balEl.textContent = fmt(Math.abs(balance));
+    balEl.className = 'mbc-balance-val ' + (balance >= 0 ? 'pos' : 'neg');
+    if(balance < 0) balEl.textContent = '−' + fmt(Math.abs(balance));
+    document.getElementById('mbc-period').textContent = periodLabel;
+    document.getElementById('mbc-inflow').textContent = fmt(inflow);
+    document.getElementById('mbc-spent').textContent = fmt(totalSpent);
+    balCard.style.display = 'flex';
+  } else {
+    balCard.style.display = 'none';
+  }
 
   document.getElementById('d-sip').textContent=fmt(s);
   document.getElementById('d-daily').textContent=fmt(d);
@@ -1249,7 +1357,8 @@ function showView(v,btn){
   document.querySelectorAll('.tab-btn').forEach(el=>el.classList.remove('active'));
   document.getElementById('view-'+v).classList.add('active');
   btn.classList.add('active');
-  if(v==='dashboard')renderDashboard();
+  if(v==='dashboard') renderDashboard();
+  if(v==='log'){ populateLogMonths(); renderLogLists(); }
 }
 function showViewDirect(v){
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
