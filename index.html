@@ -466,9 +466,22 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.4) sepia(1)
       <!-- Log Month Filter -->
       <div class="log-month-bar">
         <div class="log-month-label">📆 Month</div>
-        <select class="log-month-select" id="log-month-select" onchange="renderLogLists()">
+        <select class="log-month-select" id="log-month-select" onchange="onLogMonthChange()">
         </select>
         <div class="log-entry-count" id="log-entry-count">0 entries</div>
+      </div>
+
+      <!-- Log Balance Card -->
+      <div class="month-balance-card" id="log-balance-card" style="margin-bottom:14px">
+        <div class="mbc-left">
+          <div class="mbc-label">💰 BALANCE</div>
+          <div class="mbc-period" id="log-mbc-period">This Month</div>
+        </div>
+        <div class="mbc-right">
+          <div class="mbc-inflow"><span class="mbc-tag">Inflow</span><span id="log-mbc-inflow">₹0</span></div>
+          <div class="mbc-spent"><span class="mbc-tag">Spent</span><span id="log-mbc-spent">₹0</span></div>
+          <div class="mbc-balance-val" id="log-mbc-balance">₹0</div>
+        </div>
       </div>
 
       <!-- SIP -->
@@ -1109,6 +1122,30 @@ function deleteEntry(cat,id){
   if(document.getElementById('view-dashboard').classList.contains('active'))renderDashboard();
 }
 
+function onLogMonthChange(){
+  // Update date pickers to selected month
+  const sel = document.getElementById('log-month-select');
+  if(!sel || !sel.value) return;
+  const [y, m] = sel.value.split('-');
+  const now = new Date();
+  const curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  // If selected month is current month use today, else use last day of that month
+  let dateVal;
+  if(sel.value === curMonth){
+    dateVal = now.toISOString().split('T')[0];
+  } else {
+    // Last day of selected month
+    const lastDay = new Date(parseInt(y), parseInt(m), 0);
+    dateVal = lastDay.toISOString().split('T')[0];
+  }
+  // Update all date pickers
+  ['sip','daily','house'].forEach(cat => {
+    const el = document.getElementById(cat+'-date');
+    if(el) el.value = dateVal;
+  });
+  renderLogLists();
+}
+
 function populateLogMonths(){
   const sel = document.getElementById('log-month-select');
   if(!sel) return;
@@ -1128,13 +1165,15 @@ function populateLogMonths(){
     if(m === (curVal || curMonth)) o.selected = true;
     sel.appendChild(o);
   });
-  // If no months yet, add current month as placeholder
-  if(!months.length){
+  // Always include current month even if no entries yet
+  if(!months.includes(curMonth)){
     const o = document.createElement('option');
     o.value = curMonth;
     const [y,mo] = curMonth.split('-');
     o.textContent = `${MONTHS[parseInt(mo)-1]} ${y}`;
-    sel.appendChild(o);
+    // Insert at top (current month first)
+    sel.insertBefore(o, sel.firstChild);
+    if(!curVal) o.selected = true;
   }
 }
 
@@ -1173,6 +1212,34 @@ function renderLogLists(){
   // Update entry count badge
   const countEl = document.getElementById('log-entry-count');
   if(countEl) countEl.textContent = totalEntries + ' entr' + (totalEntries===1?'y':'ies');
+
+  // Update log balance card
+  if(logMonth){
+    const [y,m] = logMonth.split('-');
+    const periodLabel = MONTHS[parseInt(m)-1] + ' ' + y;
+    const inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+    // Total spent for this month across sip+daily+house
+    let monthSpent = 0;
+    let monthCredits = 0;
+    ['sip','daily','house'].forEach(cat => {
+      const entries = (data[cat]||[]).filter(e => e.date && e.date.startsWith(logMonth));
+      monthSpent += entries.reduce((s,e)=>s+(e.amount||0),0);
+    });
+    const creditEntries = (data.credit||[]).filter(e => e.date && e.date.startsWith(logMonth));
+    monthCredits = creditEntries.reduce((s,e)=>s+(e.amount||0),0);
+    const balance = inflow - monthSpent + monthCredits;
+    const balEl = document.getElementById('log-mbc-balance');
+    if(balEl){
+      balEl.textContent = (balance < 0 ? '−' : '') + fmt(Math.abs(balance));
+      balEl.className = 'mbc-balance-val ' + (balance >= 0 ? 'pos' : 'neg');
+    }
+    const periodEl = document.getElementById('log-mbc-period');
+    if(periodEl) periodEl.textContent = periodLabel;
+    const inflowEl = document.getElementById('log-mbc-inflow');
+    if(inflowEl) inflowEl.textContent = fmt(inflow);
+    const spentEl = document.getElementById('log-mbc-spent');
+    if(spentEl) spentEl.textContent = fmt(monthSpent);
+  }
 }
 
 // ── FILTERS ──
