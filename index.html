@@ -441,7 +441,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.4) sepia(1)
       <div class="ib-label">💰 Monthly Inflow</div>
       <div class="ib-input-row">
         <span class="ib-prefix">₹</span>
-        <input class="ib-input" id="inflow-input" type="number" min="0" placeholder="This month's income" oninput="updateBalance()"/>
+        <input class="ib-input" id="inflow-input" type="number" min="0" placeholder="This month's income" oninput="saveInflow();updateBalance()"/>
       </div>
       <div class="ib-sub" id="ib-sub">Enter your monthly income ✨</div>
     </div>
@@ -986,12 +986,20 @@ async function loadUserData(){
             };
             const inflow = d.inflow||'';
             const inflowMap = d.inflowMap || {};
-            // Save inflowMap locally
-            localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(inflowMap));
+            // Update local inflowMap cache (merge, don't overwrite)
+            try{
+              const local = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+              Object.assign(local, inflowMap);
+              localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(local));
+            }catch(e){}
             // Load inflow for current log month
             const curLogMonth = getCurrentLogMonth();
-            const monthInflow = inflowMap[curLogMonth] !== undefined ? inflowMap[curLogMonth] : inflow;
-            document.getElementById('inflow-input').value = monthInflow;
+            const monthInflow = inflowMap[curLogMonth] !== undefined ? inflowMap[curLogMonth] : (inflow||'');
+            // Only update input if it's not currently being edited
+            const inputEl = document.getElementById('inflow-input');
+            if(document.activeElement !== inputEl){
+              inputEl.value = monthInflow > 0 ? monthInflow : '';
+            }
             // Also save to local for offline
             localStore.set(storageKey(currentUser,'expenses'), JSON.stringify(data));
             localStore.set(storageKey(currentUser,'inflow'), String(inflow));
@@ -1063,24 +1071,23 @@ function getCurrentLogMonth(){
   return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
 }
 
-function updateBalance(){
-  const inflow=parseFloat(document.getElementById('inflow-input').value)||0;
+// Save inflow for current month - called only when user types
+function saveInflow(){
+  const inflow = parseFloat(document.getElementById('inflow-input').value)||0;
   const logMonth = getCurrentLogMonth();
-  // Save per-month inflow
   try{
     const stored = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
     stored[logMonth] = inflow;
     localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(stored));
   }catch(e){}
-  // Also save to Firebase as inflowMap
   if(db){
-    const update = {};
-    update['inflowMap.'+logMonth] = inflow;
+    const update = {'inflowMap.'+logMonth: inflow};
     db.collection('users').doc(currentUser).set(update,{merge:true}).catch(()=>{});
   }
-  // Keep legacy inflow for backward compat
-  localStore.set(storageKey(currentUser,'inflow'), String(inflow));
-  if(db) db.collection('users').doc(currentUser).set({inflow:String(inflow)},{merge:true}).catch(()=>{});
+}
+
+function updateBalance(){
+  const inflow=parseFloat(document.getElementById('inflow-input').value)||0;
   const totalExp=['sip','daily','house'].reduce((s,c)=>s+totalAll(c),0);
   const totalCredit=totalAll('credit');
   const effectiveInflow=inflow+totalCredit;
@@ -1179,42 +1186,54 @@ function onLogMonthChange(){
 }
 
 function loadInflowForMonth(month){
-  // First check local inflowMap cache
+  const input = document.getElementById('inflow-input');
+
+  // Step 1: Check local inflowMap cache first (instant)
   try{
     const stored = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
     if(stored[month] !== undefined){
-      document.getElementById('inflow-input').value = stored[month] > 0 ? stored[month] : '';
+      input.value = stored[month] > 0 ? stored[month] : '';
       updateBalance();
+      // Still fetch from Firebase to ensure we have latest value
+      if(db){
+        db.collection('users').doc(currentUser).get().then(doc => {
+          if(doc.exists){
+            const inflowMap = doc.data().inflowMap || {};
+            // Update local cache
+            const local = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+            Object.assign(local, inflowMap);
+            localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(local));
+            // Only update UI if value differs
+            const fbVal = inflowMap[month];
+            if(fbVal !== undefined && fbVal !== parseFloat(input.value||0)){
+              input.value = fbVal > 0 ? fbVal : '';
+              updateBalance();
+            }
+          }
+        }).catch(()=>{});
+      }
       return;
     }
   }catch(e){}
 
-  // If not in local cache, fetch from Firebase
+  // Step 2: Not in local cache — fetch from Firebase
+  input.value = ''; // Clear while loading
+  updateBalance();
   if(db){
     db.collection('users').doc(currentUser).get().then(doc => {
       if(doc.exists){
-        const d = doc.data();
-        const inflowMap = d.inflowMap || {};
-        const val = inflowMap[month];
-        // Update local cache with full map
+        const inflowMap = doc.data().inflowMap || {};
+        // Save full map to local
         try{
-          localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(inflowMap));
+          const local = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+          Object.assign(local, inflowMap);
+          localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(local));
         }catch(e){}
-        if(val !== undefined && val > 0){
-          document.getElementById('inflow-input').value = val;
-        } else {
-          document.getElementById('inflow-input').value = '';
-        }
+        const val = inflowMap[month];
+        input.value = (val !== undefined && val > 0) ? val : '';
         updateBalance();
       }
-    }).catch(()=>{
-      document.getElementById('inflow-input').value = '';
-      updateBalance();
-    });
-  } else {
-    // Offline — clear inflow for this month if not cached
-    document.getElementById('inflow-input').value = '';
-    updateBalance();
+    }).catch(()=>{});
   }
 }
 
