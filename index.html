@@ -1187,8 +1187,6 @@ function onLogMonthChange(){
   const lbl = document.getElementById('inflow-month-label');
   if(lbl) lbl.textContent = '💰 ' + MONTHS[parseInt(ml)-1].toUpperCase() + ' ' + yl + ' INFLOW';
   // Lock inflow input for past months, unlock for current month
-  const now = new Date();
-  const curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   const inflowInput = document.getElementById('inflow-input');
   const inflowCard = document.querySelector('.ib-card.inflow');
   if(sel.value !== curMonth){
