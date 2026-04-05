@@ -1073,7 +1073,10 @@ function getCurrentLogMonth(){
 
 // Save inflow for current month - called only when user types
 function saveInflow(){
-  const inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+  // Only save if input is not read-only (i.e. current month)
+  const inputEl = document.getElementById('inflow-input');
+  if(inputEl.readOnly) return;
+  const inflow = parseFloat(inputEl.value)||0;
   const logMonth = getCurrentLogMonth();
   try{
     const stored = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
@@ -1183,6 +1186,26 @@ function onLogMonthChange(){
   const [yl,ml] = sel.value.split('-');
   const lbl = document.getElementById('inflow-month-label');
   if(lbl) lbl.textContent = '💰 ' + MONTHS[parseInt(ml)-1].toUpperCase() + ' ' + yl + ' INFLOW';
+  // Lock inflow input for past months, unlock for current month
+  const now = new Date();
+  const curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const inflowInput = document.getElementById('inflow-input');
+  const inflowCard = document.querySelector('.ib-card.inflow');
+  if(sel.value !== curMonth){
+    // Past month — make read-only
+    inflowInput.readOnly = true;
+    inflowInput.style.opacity = '0.6';
+    inflowInput.style.cursor = 'not-allowed';
+    inflowInput.title = 'Past month — inflow is locked';
+    if(inflowCard) inflowCard.style.borderColor = 'rgba(56,189,248,.1)';
+  } else {
+    // Current month — editable
+    inflowInput.readOnly = false;
+    inflowInput.style.opacity = '1';
+    inflowInput.style.cursor = 'text';
+    inflowInput.title = '';
+    if(inflowCard) inflowCard.style.borderColor = '';
+  }
   renderLogLists();
 }
 
@@ -1319,14 +1342,12 @@ function renderLogLists(){
   if(logMonth){
     const [y,m] = logMonth.split('-');
     const periodLabel = MONTHS[parseInt(m)-1] + ' ' + y;
-    // Get inflow for this specific month from inflowMap
+    // Get inflow for this specific month from inflowMap ONLY (never from input directly)
     let inflow = 0;
     try{
       const inflowMap = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
-      inflow = inflowMap[logMonth] !== undefined ? parseFloat(inflowMap[logMonth])||0 : parseFloat(document.getElementById('inflow-input').value)||0;
-    }catch(e){
-      inflow = parseFloat(document.getElementById('inflow-input').value)||0;
-    }
+      inflow = parseFloat(inflowMap[logMonth])||0;
+    }catch(e){ inflow = 0; }
     // Total spent for this month across sip+daily+house
     let monthSpent = 0;
     let monthCredits = 0;
