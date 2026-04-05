@@ -985,11 +985,18 @@ async function loadUserData(){
               credit: d.credit||[]
             };
             const inflow = d.inflow||'';
-            document.getElementById('inflow-input').value = inflow;
+            const inflowMap = d.inflowMap || {};
+            // Save inflowMap locally
+            localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(inflowMap));
+            // Load inflow for current log month
+            const curLogMonth = getCurrentLogMonth();
+            const monthInflow = inflowMap[curLogMonth] !== undefined ? inflowMap[curLogMonth] : inflow;
+            document.getElementById('inflow-input').value = monthInflow;
             // Also save to local for offline
             localStore.set(storageKey(currentUser,'expenses'), JSON.stringify(data));
             localStore.set(storageKey(currentUser,'inflow'), String(inflow));
             setDefaultDates();
+            populateLogMonths();
             populateFilters();
             renderLogLists();
             updateBalance();
@@ -1049,9 +1056,29 @@ function setDefaultDates(){
 function randomEmoji(cat){const arr=CAT_EMOJIS[cat];return arr[Math.floor(Math.random()*arr.length)];}
 
 // ── BALANCE ──
+function getCurrentLogMonth(){
+  const sel = document.getElementById('log-month-select');
+  if(sel && sel.value) return sel.value;
+  const now = new Date();
+  return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+}
+
 function updateBalance(){
   const inflow=parseFloat(document.getElementById('inflow-input').value)||0;
-  // inflow is saved as part of saveData() when any entry changes
+  const logMonth = getCurrentLogMonth();
+  // Save per-month inflow
+  try{
+    const stored = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+    stored[logMonth] = inflow;
+    localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(stored));
+  }catch(e){}
+  // Also save to Firebase as inflowMap
+  if(db){
+    const update = {};
+    update['inflowMap.'+logMonth] = inflow;
+    db.collection('users').doc(currentUser).set(update,{merge:true}).catch(()=>{});
+  }
+  // Keep legacy inflow for backward compat
   localStore.set(storageKey(currentUser,'inflow'), String(inflow));
   if(db) db.collection('users').doc(currentUser).set({inflow:String(inflow)},{merge:true}).catch(()=>{});
   const totalExp=['sip','daily','house'].reduce((s,c)=>s+totalAll(c),0);
@@ -1134,7 +1161,6 @@ function onLogMonthChange(){
   if(sel.value === curMonth){
     dateVal = now.toISOString().split('T')[0];
   } else {
-    // Last day of selected month
     const lastDay = new Date(parseInt(y), parseInt(m), 0);
     dateVal = lastDay.toISOString().split('T')[0];
   }
@@ -1143,7 +1169,48 @@ function onLogMonthChange(){
     const el = document.getElementById(cat+'-date');
     if(el) el.value = dateVal;
   });
+  // ── Load inflow for selected month ──
+  loadInflowForMonth(sel.value);
   renderLogLists();
+}
+
+function loadInflowForMonth(month){
+  try{
+    // Try inflowMap first (per-month)
+    const stored = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+    if(stored[month] !== undefined){
+      document.getElementById('inflow-input').value = stored[month] || '';
+      updateBalance();
+      return;
+    }
+    // Also check Firebase inflowMap
+    if(db){
+      db.collection('users').doc(currentUser).get().then(doc => {
+        if(doc.exists){
+          const d = doc.data();
+          const inflowMap = d.inflowMap || {};
+          if(inflowMap[month] !== undefined){
+            document.getElementById('inflow-input').value = inflowMap[month] || '';
+            // Save to local
+            const local = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+            local[month] = inflowMap[month];
+            localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(local));
+            updateBalance();
+          } else {
+            // No inflow for this month yet — clear input
+            document.getElementById('inflow-input').value = '';
+            updateBalance();
+          }
+        }
+      }).catch(()=>{});
+    } else {
+      document.getElementById('inflow-input').value = '';
+      updateBalance();
+    }
+  }catch(e){
+    document.getElementById('inflow-input').value = '';
+    updateBalance();
+  }
 }
 
 function populateLogMonths(){
@@ -1217,7 +1284,14 @@ function renderLogLists(){
   if(logMonth){
     const [y,m] = logMonth.split('-');
     const periodLabel = MONTHS[parseInt(m)-1] + ' ' + y;
-    const inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+    // Get inflow for this specific month from inflowMap
+    let inflow = 0;
+    try{
+      const inflowMap = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+      inflow = inflowMap[logMonth] !== undefined ? parseFloat(inflowMap[logMonth])||0 : parseFloat(document.getElementById('inflow-input').value)||0;
+    }catch(e){
+      inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+    }
     // Total spent for this month across sip+daily+house
     let monthSpent = 0;
     let monthCredits = 0;
@@ -1287,7 +1361,14 @@ function renderDashboard(){
     const [y,m] = mVal.split('-');
     const periodLabel = `${MONTHS[parseInt(m)-1]} ${y}`;
     // Get inflow (monthly inflow from input)
-    const inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+    // Get inflow for this specific month from inflowMap
+    let inflow = 0;
+    try{
+      const inflowMap = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
+      inflow = inflowMap[mVal] !== undefined ? parseFloat(inflowMap[mVal])||0 : parseFloat(document.getElementById('inflow-input').value)||0;
+    }catch(e){
+      inflow = parseFloat(document.getElementById('inflow-input').value)||0;
+    }
     const totalSpent = s + d + h;  // exclude credits from spent
     const balance = inflow - totalSpent + cr; // add credits back
     const balEl = document.getElementById('mbc-balance');
