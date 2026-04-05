@@ -1081,7 +1081,8 @@ function saveInflow(){
     localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(stored));
   }catch(e){}
   if(db){
-    const update = {'inflowMap.'+logMonth: inflow};
+    const update = {};
+    update['inflowMap.'+logMonth] = inflow;
     db.collection('users').doc(currentUser).set(update,{merge:true}).catch(()=>{});
   }
 }
