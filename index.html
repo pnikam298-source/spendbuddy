@@ -441,7 +441,7 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(.4) sepia(1)
       <div class="ib-label">💰 Monthly Inflow</div>
       <div class="ib-input-row">
         <span class="ib-prefix">₹</span>
-        <input class="ib-input" id="inflow-input" type="number" min="0" placeholder="Your income" oninput="updateBalance()"/>
+        <input class="ib-input" id="inflow-input" type="number" min="0" placeholder="This month's income" oninput="updateBalance()"/>
       </div>
       <div class="ib-sub" id="ib-sub">Enter your monthly income ✨</div>
     </div>
@@ -1171,43 +1171,48 @@ function onLogMonthChange(){
   });
   // ── Load inflow for selected month ──
   loadInflowForMonth(sel.value);
+  // Update inflow label to show selected month
+  const [yl,ml] = sel.value.split('-');
+  const lbl = document.getElementById('inflow-month-label');
+  if(lbl) lbl.textContent = '💰 ' + MONTHS[parseInt(ml)-1].toUpperCase() + ' ' + yl + ' INFLOW';
   renderLogLists();
 }
 
 function loadInflowForMonth(month){
+  // First check local inflowMap cache
   try{
-    // Try inflowMap first (per-month)
     const stored = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
     if(stored[month] !== undefined){
-      document.getElementById('inflow-input').value = stored[month] || '';
+      document.getElementById('inflow-input').value = stored[month] > 0 ? stored[month] : '';
       updateBalance();
       return;
     }
-    // Also check Firebase inflowMap
-    if(db){
-      db.collection('users').doc(currentUser).get().then(doc => {
-        if(doc.exists){
-          const d = doc.data();
-          const inflowMap = d.inflowMap || {};
-          if(inflowMap[month] !== undefined){
-            document.getElementById('inflow-input').value = inflowMap[month] || '';
-            // Save to local
-            const local = JSON.parse(localStorage.getItem(storageKey(currentUser,'inflowMap'))||'{}');
-            local[month] = inflowMap[month];
-            localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(local));
-            updateBalance();
-          } else {
-            // No inflow for this month yet — clear input
-            document.getElementById('inflow-input').value = '';
-            updateBalance();
-          }
+  }catch(e){}
+
+  // If not in local cache, fetch from Firebase
+  if(db){
+    db.collection('users').doc(currentUser).get().then(doc => {
+      if(doc.exists){
+        const d = doc.data();
+        const inflowMap = d.inflowMap || {};
+        const val = inflowMap[month];
+        // Update local cache with full map
+        try{
+          localStorage.setItem(storageKey(currentUser,'inflowMap'), JSON.stringify(inflowMap));
+        }catch(e){}
+        if(val !== undefined && val > 0){
+          document.getElementById('inflow-input').value = val;
+        } else {
+          document.getElementById('inflow-input').value = '';
         }
-      }).catch(()=>{});
-    } else {
+        updateBalance();
+      }
+    }).catch(()=>{
       document.getElementById('inflow-input').value = '';
       updateBalance();
-    }
-  }catch(e){
+    });
+  } else {
+    // Offline — clear inflow for this month if not cached
     document.getElementById('inflow-input').value = '';
     updateBalance();
   }
@@ -1217,31 +1222,41 @@ function populateLogMonths(){
   const sel = document.getElementById('log-month-select');
   if(!sel) return;
   const curVal = sel.value;
-  // Get all months from all categories
-  const allDates = ['sip','daily','house','credit'].flatMap(cat => (data[cat]||[]).map(e=>e.date||''));
-  const months = [...new Set(allDates.filter(Boolean).map(d=>d.slice(0,7)))].sort().reverse();
-  sel.innerHTML = '';
-  // Default to current month
   const now = new Date();
   const curMonth = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
-  months.forEach(m => {
+
+  // Find earliest year from existing entries (or use current year if no entries)
+  const allDates = ['sip','daily','house','credit'].flatMap(cat => (data[cat]||[]).map(e=>e.date||''));
+  const existingMonths = allDates.filter(Boolean).map(d=>d.slice(0,7));
+  const earliestYear = existingMonths.length
+    ? Math.min(...existingMonths.map(m=>parseInt(m.split('-')[0])))
+    : now.getFullYear();
+
+  // Generate ALL months from Jan of earliest year to current month
+  const allMonths = [];
+  for(let y = earliestYear; y <= now.getFullYear(); y++){
+    const startM = 1;
+    const endM = (y === now.getFullYear()) ? now.getMonth()+1 : 12;
+    for(let m = startM; m <= endM; m++){
+      allMonths.push(y+'-'+String(m).padStart(2,'0'));
+    }
+  }
+  // Sort newest first
+  allMonths.reverse();
+
+  sel.innerHTML = '';
+  allMonths.forEach(m => {
     const [y,mo] = m.split('-');
     const o = document.createElement('option');
     o.value = m;
-    o.textContent = `${MONTHS[parseInt(mo)-1]} ${y}`;
+    // Show entry count hint
+    const entryCount = ['sip','daily','house','credit'].reduce((sum,cat)=>{
+      return sum + (data[cat]||[]).filter(e=>e.date&&e.date.startsWith(m)).length;
+    },0);
+    o.textContent = `${MONTHS[parseInt(mo)-1]} ${y}${entryCount>0?' ('+entryCount+')':''}`;
     if(m === (curVal || curMonth)) o.selected = true;
     sel.appendChild(o);
   });
-  // Always include current month even if no entries yet
-  if(!months.includes(curMonth)){
-    const o = document.createElement('option');
-    o.value = curMonth;
-    const [y,mo] = curMonth.split('-');
-    o.textContent = `${MONTHS[parseInt(mo)-1]} ${y}`;
-    // Insert at top (current month first)
-    sel.insertBefore(o, sel.firstChild);
-    if(!curVal) o.selected = true;
-  }
 }
 
 function renderLogLists(){
