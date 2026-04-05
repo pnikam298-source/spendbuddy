@@ -1,3 +1,3 @@
-const CACHE='spendbuddy-v5';
+const CACHE='spendbuddy-v6';
 self.addEventListener('install',e=>{self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
